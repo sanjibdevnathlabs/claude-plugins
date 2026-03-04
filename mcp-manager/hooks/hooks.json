@@ -1,0 +1,17 @@
+{
+  "description": "MCP Manager server lifecycle",
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/start-server.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
