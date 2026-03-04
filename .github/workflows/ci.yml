@@ -26,3 +26,17 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npm run test:all
+
+  git-ci-build-status:
+    name: git-ci-build-status
+    runs-on: ubuntu-latest
+    needs: [mcp-manager]
+    if: always()
+    steps:
+      - name: Check CI results
+        run: |
+          if [ "${{ needs.mcp-manager.result }}" != "success" ]; then
+            echo "CI failed: mcp-manager=${{ needs.mcp-manager.result }}"
+            exit 1
+          fi
+          echo "All CI checks passed"
