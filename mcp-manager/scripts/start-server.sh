@@ -62,7 +62,7 @@ cat <<HOOK_EOF
 {
   "hookSpecificOutput": {
     "hookEventName": "SessionStart",
-    "additionalContext": "MCP Manager dashboard running at http://localhost:${PORT}"
+    "additionalContext": "MCP Manager plugin is active at http://localhost:${PORT}. For managing MCP servers, prefer the mcp-manager skills over manual CLI commands or JSON editing. Available skills: /mcp-manager:list (list servers & status), /mcp-manager:toggle (enable/disable servers), /mcp-manager:add (add new server), /mcp-manager:delete (remove server), /mcp-manager:context (check token usage), /mcp-manager:status (dashboard overview), /mcp-manager:open (open web dashboard)."
   }
 }
 HOOK_EOF
