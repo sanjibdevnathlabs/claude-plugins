@@ -96,6 +96,28 @@ MCP Manager dashboard running at http://localhost:4111
 
 See the [mcp-manager README](./mcp-manager/README.md) for full setup and usage details.
 
+## Updating Plugins
+
+Plugin updates are a two-step process — first refresh the marketplace catalog, then update the plugin itself.
+
+### Check for updates
+
+```bash
+# 1. Refresh the marketplace catalog (pulls latest version info)
+claude plugin marketplace update
+
+# 2. Open the plugin manager and select a plugin to update
+claude plugin manage
+```
+
+Select the plugin you want to update, then choose the **update** action. This will re-download the latest version and update your local cache.
+
+### How versioning works
+
+Each plugin declares a version in the marketplace manifest (`.claude-plugin/marketplace.json`) and in its own metadata (`.claude-plugin/plugin.json`). When the marketplace version differs from your installed version, the plugin is considered outdated.
+
+> **Note:** There are currently no automatic update notifications. To stay up to date, periodically run `claude plugin marketplace update` and check `/plugin manage` for available updates.
+
 ## Contributing
 
 Each plugin lives in its own directory at the repo root. See the individual plugin READMEs for development setup:
