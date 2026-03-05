@@ -1,6 +1,6 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "claude-plugins",
+  "name": "sanjibdevnathlabs-plugins",
   "description": "Custom Claude Code plugins",
   "owner": {
     "name": "Sanjib Devnath",
