@@ -4,6 +4,8 @@ coverage/
 .env
 *.log
 .DS_Store
-.claude/
+# Ignore .claude/ except skills/ (committed for developer use)
+.claude/*
+!.claude/skills
 .mcp.json
 *.pid
