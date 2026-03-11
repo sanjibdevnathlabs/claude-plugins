@@ -9,6 +9,12 @@ allowed-tools: Bash
 
 Enable or disable a specific MCP server by name.
 
+## Config File Locations (Claude Code only)
+
+- **Global servers** are stored in `~/.claude.json` under `mcpServers` (enabled) and `_mcpServers_disabled` (disabled). This is NOT `~/.cursor/mcp.json` — that file is for Cursor, not Claude Code.
+- **Project servers** are defined in `.mcp.json` at the project root. This file format is shared by Claude Code and Cursor, but MCP Manager only modifies it for Claude Code.
+- **Project toggle state** is stored in `.claude/settings.local.json` under `disabledMcpjsonServers`.
+
 ## Instructions
 
 1. Check if the MCP Manager server is running:
@@ -35,8 +41,10 @@ Enable or disable a specific MCP server by name.
      -d '{"name": "<SERVER_NAME>", "scope": "<SCOPE>"}'
    ```
    - `name`: the MCP server name (e.g., "github", "slack")
-   - `scope`: either "project" or "global" — if the user doesn't specify, check the config to determine where the server is defined
+   - `scope`: use `"global"` for global servers, or the **full absolute workspace path** (e.g., `"/Users/me/my-project"`) for project servers. Do NOT use the string `"project"`. Check the server's `scope` field from the `/api/config` response.
 
-5. Report the result to the user, confirming whether the server is now enabled or disabled.
+5. Report the result to the user, confirming whether the server is now enabled or disabled. Mention which file was modified:
+   - Global toggle: `~/.claude.json`
+   - Project toggle: `.claude/settings.local.json` in the project root
 
 6. Remind the user they may need to restart their Claude Code session for changes to take effect.

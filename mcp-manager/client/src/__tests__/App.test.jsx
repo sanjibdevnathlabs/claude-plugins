@@ -682,6 +682,48 @@ describe('Scope persistence', () => {
   });
 });
 
+// --- Config bar ---
+describe('Config bar', () => {
+  it('shows ~/.claude.json for global scope', async () => {
+    global.fetch = mockFetchResponses({
+      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'n' } }], _meta: {} },
+      workspaces: [],
+    });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
+    });
+
+    expect(screen.getByText('~/.claude.json')).toBeInTheDocument();
+    expect(screen.queryByText('.mcp.json')).not.toBeInTheDocument();
+  });
+
+  it('shows .mcp.json and ~/.claude.json for workspace scope', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    sessionStorage.setItem('mcp-manager-scope', WORKSPACE_PATH);
+    global.fetch = mockFetchResponses({
+      config: MULTI_SCOPE_CONFIG,
+      workspaces: [WORKSPACE_PATH],
+    });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
+    });
+
+    // Workspace scope should show both config paths
+    expect(screen.getByText('.mcp.json')).toBeInTheDocument();
+    expect(screen.getByText('~/.claude.json')).toBeInTheDocument();
+  });
+});
+
 // --- Toggle refreshes context for global scope ---
 describe('Toggle context refresh', () => {
   it('refreshes context usage when toggling a global server', async () => {

@@ -49,6 +49,56 @@ describe('FT-11: Home directory "~ (home)" label', () => {
   });
 });
 
+// --- Tooltip tests ---
+describe('Workspace selector tooltips', () => {
+  it('global option has tooltip mentioning ~/.claude.json', async () => {
+    const user = userEvent.setup();
+    render(
+      <WorkspaceSelector
+        workspaces={['/Users/dev/my-project']}
+        activeScope="global"
+        onSelect={vi.fn()}
+        serverCounts={{
+          global: [{ name: 'g1' }],
+          '/Users/dev/my-project': [{ name: 'w1' }],
+          _meta: { homedir: '/Users/dev' },
+        }}
+        globalCount={1}
+        onDeleteWorkspace={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button'));
+
+    const globalOption = screen.getByTitle('Global config: ~/.claude.json (Claude Code)');
+    expect(globalOption).toBeInTheDocument();
+  });
+
+  it('workspace option has tooltip mentioning .mcp.json', async () => {
+    const user = userEvent.setup();
+    const workspace = '/Users/dev/my-project';
+    render(
+      <WorkspaceSelector
+        workspaces={[workspace]}
+        activeScope="global"
+        onSelect={vi.fn()}
+        serverCounts={{
+          global: [],
+          [workspace]: [{ name: 'w1' }],
+          _meta: { homedir: '/Users/dev' },
+        }}
+        globalCount={0}
+        onDeleteWorkspace={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole('button'));
+
+    const wsOption = screen.getByTitle(`Project config: ${workspace}/.mcp.json`);
+    expect(wsOption).toBeInTheDocument();
+  });
+});
+
 // --- Delete button tests ---
 describe('Workspace delete button', () => {
   it('shows delete button for non-global scopes in dropdown', async () => {

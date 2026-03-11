@@ -41,7 +41,32 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: spacing[3],
-    marginBottom: spacing[6],
+    marginBottom: spacing[2],
+  },
+  configBar: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: spacing[3],
+    padding: `${spacing[2]}px ${spacing[4]}px`,
+    marginBottom: spacing[5],
+    borderRadius: radius.sm,
+    background: color.bg.elevated,
+    border: `1px solid ${color.border.subtle}`,
+    fontSize: font.size.xs,
+    color: color.text.muted,
+    lineHeight: `${font.lineHeight.sm}px`,
+    flexWrap: 'wrap',
+  },
+  configPath: {
+    fontFamily: font.family.code,
+    fontSize: font.size.xs,
+    color: color.text.subtle,
+  },
+  configSep: {
+    width: 1,
+    height: 12,
+    background: color.border.subtle,
+    flexShrink: 0,
   },
   addBtn: {
     display: 'inline-flex',
@@ -288,6 +313,22 @@ export default function App() {
         >
           + Add
         </button>
+      </div>
+      <div style={styles.configBar}>
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M2 3.5A1.5 1.5 0 013.5 2h4.586a1.5 1.5 0 011.06.44l3.415 3.414A1.5 1.5 0 0113 6.914V12.5a1.5 1.5 0 01-1.5 1.5h-8A1.5 1.5 0 012 12.5v-9z" stroke="currentColor" strokeWidth="1.3" fill="none"/>
+        </svg>
+        {activeScope === 'global' ? (
+          <>
+            <span>Config: <span style={styles.configPath}>~/.claude.json</span></span>
+          </>
+        ) : (
+          <>
+            <span>Project: <span style={styles.configPath}>.mcp.json</span></span>
+            <div style={styles.configSep} />
+            <span>Global: <span style={styles.configPath}>~/.claude.json</span></span>
+          </>
+        )}
       </div>
       {showAddForm && (
         <AddServerForm

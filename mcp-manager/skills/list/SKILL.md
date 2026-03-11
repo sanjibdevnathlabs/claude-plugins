@@ -9,6 +9,11 @@ allowed-tools: Bash
 
 Show all configured MCP servers grouped by scope, with their enabled/disabled status and connection type.
 
+## Config File Locations (Claude Code only)
+
+- **Global servers** (`scope: "global"`): stored in `~/.claude.json` — NOT `~/.cursor/mcp.json`
+- **Project servers** (`scope: "<workspace-path>"`): stored in `.mcp.json` at the project root
+
 ## Instructions
 
 1. Check if the MCP Manager server is running:
@@ -28,9 +33,10 @@ Show all configured MCP servers grouped by scope, with their enabled/disabled st
    ```
 
 4. Parse and display the response in a readable format:
-   - Group servers by scope (project-level vs global)
+   - Group servers by scope: `"global"` means `~/.claude.json`, any path means `.mcp.json` in that directory
    - For each server show: name, enabled/disabled status, connection type (stdio/http)
    - Highlight any servers that are currently disabled
    - Show the total count of servers
+   - Note: the `scope` field for project servers is the full workspace path (e.g., `/Users/me/project`), not the string "project"
 
 5. If the user wants to toggle or modify a server, suggest using `/mcp-manager:toggle`, `/mcp-manager:add`, or `/mcp-manager:delete`.

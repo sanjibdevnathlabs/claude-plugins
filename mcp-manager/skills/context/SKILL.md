@@ -1,13 +1,17 @@
 ---
 name: context
-description: Show token budget and context window usage per MCP server. Use this to check MCP token consumption, see how much context each MCP server uses, analyze context window pressure, debug token budget issues, or optimize MCP server context usage.
+description: Show estimated token usage per MCP server based on tool count. Use this to check MCP token consumption, see how much context each MCP server uses, analyze context window pressure, debug token budget issues, or optimize MCP server context usage.
 user_invocable: true
 allowed-tools: Bash
 ---
 
 # MCP Context Usage
 
-Show how much of the token/context budget each MCP server is consuming.
+Show estimated token consumption per enabled global MCP server.
+
+## How It Works
+
+The `/api/context-usage` endpoint probes each enabled global server's tools and estimates token usage as: **tool count × 600 tokens per tool**. This is a rough estimate of how much context window each server's tool definitions consume. The warning threshold is 25,000 tokens.
 
 ## Instructions
 
@@ -27,10 +31,16 @@ Show how much of the token/context budget each MCP server is consuming.
    curl -s http://localhost:4111/api/context-usage
    ```
 
-4. Display the results in a readable format:
-   - Show each MCP server's token usage (tool definitions, resources, etc.)
-   - Show the total context consumed by all MCP servers combined
-   - Highlight any servers consuming a disproportionate amount of context
-   - If available, show the percentage of the total context window used
+4. The response contains:
+   - `servers`: array of `{ name, toolCount, estimatedTokens, error }` for each enabled global server
+   - `totalTokens`: sum of all estimated tokens
+   - `threshold`: 25000 (the warning threshold)
+   - `warning`: boolean, true if totalTokens exceeds the threshold
 
-5. If a server is using too much context, suggest the user can disable it with `/mcp-manager:toggle` or remove it with `/mcp-manager:delete`.
+5. Display the results in a readable format:
+   - Show each server's name, tool count, and estimated tokens
+   - Show the total estimated tokens across all servers
+   - Flag any servers with errors (probe failures, timeouts)
+   - If `warning` is true, highlight that total token usage exceeds the 25,000 token threshold
+
+6. If a server is using too much context, suggest the user can disable it with `/mcp-manager:toggle` or remove it with `/mcp-manager:delete`.

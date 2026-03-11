@@ -9,6 +9,11 @@ allowed-tools: Bash
 
 Remove an MCP server from the Claude Code configuration.
 
+## Config File Locations (Claude Code only)
+
+- **Global servers** are stored in `~/.claude.json` (NOT `~/.cursor/mcp.json`).
+- **Project servers** are defined in `.mcp.json` at the project root.
+
 ## Instructions
 
 1. Check if the MCP Manager server is running:
@@ -37,6 +42,10 @@ Remove an MCP server from the Claude Code configuration.
      -d '{"name": "<SERVER_NAME>", "scope": "<SCOPE>"}'
    ```
    - `name`: the MCP server name
-   - `scope`: "project" or "global" — check the config if the user doesn't specify
+   - `scope`: use `"global"` for global servers, or the **full absolute workspace path** (e.g., `"/Users/me/my-project"`) for project servers. Do NOT use the string `"project"`. Check the server's `scope` field from the `/api/config` response.
 
-6. Confirm the deletion was successful and remind the user to restart their Claude Code session.
+6. Confirm the deletion was successful. Mention which file was modified:
+   - Global: removed from `~/.claude.json`
+   - Project: removed from `.mcp.json` in the project root
+
+7. Remind the user to restart their Claude Code session.

@@ -2,6 +2,7 @@
 name: open
 description: Opens the MCP Manager dashboard in your browser
 user_invocable: true
+allowed-tools: Bash
 ---
 
 # MCP Manager Dashboard

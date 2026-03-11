@@ -10,7 +10,7 @@
     {
       "name": "mcp-manager",
       "description": "Web dashboard to toggle MCP servers on/off, view tools, manage configs",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": {
         "name": "Sanjib Devnath",
         "email": "devnath.sanjib@gmail.com"

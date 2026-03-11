@@ -9,6 +9,11 @@ allowed-tools: Bash
 
 Add a new MCP server to the Claude Code configuration.
 
+## Config File Locations (Claude Code only)
+
+- **Global scope** writes to `~/.claude.json` under `mcpServers`. This is NOT `~/.cursor/mcp.json`.
+- **Project scope** writes to `.mcp.json` at the project root.
+
 ## Instructions
 
 1. Check if the MCP Manager server is running:
@@ -25,7 +30,7 @@ Add a new MCP server to the Claude Code configuration.
 3. Gather the required information from the user if not already provided:
    - **name**: Server name (e.g., "my-server")
    - **type**: "stdio" or "http"
-   - **scope**: "project" or "global" (default: "project")
+   - **scope**: `"global"` or the **full absolute workspace path** (e.g., `"/Users/me/my-project"`) for project scope. Do NOT use the string `"project"`. Default to `"global"` unless the user specifies a project.
    - For stdio: **command** and **args** (array of strings)
    - For http: **url**
 
@@ -45,4 +50,8 @@ Add a new MCP server to the Claude Code configuration.
    ```
    For HTTP type, use `"url"` instead of `"command"` and `"args"`.
 
-5. Confirm the server was added successfully and remind the user to restart their Claude Code session to activate it.
+5. Confirm the server was added successfully. Mention which file was modified:
+   - Global: added to `~/.claude.json`
+   - Project: added to `.mcp.json` in the project root
+
+6. Remind the user to restart their Claude Code session to activate it.

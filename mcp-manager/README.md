@@ -6,7 +6,7 @@ A web dashboard for managing [Model Context Protocol](https://modelcontextprotoc
 
 ### Prerequisites
 
-- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and run at least once (so `~/.claude.json` exists)
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed (`~/.claude.json` is created automatically by Claude Code; MCP Manager also works without it and will create it on first server add)
 - Node.js 20+
 - npm
 
@@ -22,7 +22,7 @@ claude plugin install mcp-manager
 
 That's it. The plugin automatically:
 - Registers a `SessionStart` hook that starts the dashboard server whenever you open Claude Code
-- Registers the `/open` skill so you can type `/open` inside Claude Code to launch the dashboard
+- Registers 7 skills: `/mcp-manager:list`, `/mcp-manager:toggle`, `/mcp-manager:add`, `/mcp-manager:delete`, `/mcp-manager:context`, `/mcp-manager:status`, `/mcp-manager:open`
 
 ### Option 2: Clone and install manually
 
@@ -38,8 +38,20 @@ Then configure the Claude Code hooks manually (see [Configure Claude Code Hooks]
 ### Verify it works
 
 1. Start a new Claude Code session (or restart your current one)
-2. You should see a message like: `MCP Manager dashboard running at http://localhost:4111`
-3. Open http://localhost:4111 in your browser, or type `/open` inside Claude Code
+2. You should see a context message: "MCP Manager plugin is active at http://localhost:4111."
+3. Open http://localhost:4111 in your browser, or type `/mcp-manager:open` inside Claude Code
+
+## Where Are Configs Stored?
+
+MCP Manager is for **Claude Code only**. It does NOT read or write Cursor's config files.
+
+| Scope | Config File | What's Stored |
+|-------|------------|---------------|
+| **Global** | `~/.claude.json` | All global MCP servers (under `mcpServers` and `_mcpServers_disabled`) |
+| **Project** | `<project>/.mcp.json` | Project-specific MCP servers |
+| **Project toggle state** | `<project>/.claude/settings.local.json` | Which `.mcp.json` servers are disabled (under `disabledMcpjsonServers`) |
+
+**Common point of confusion:** `.mcp.json` is a shared file format used by both Claude Code and Cursor. MCP Manager reads/writes this file for Claude Code — it has nothing to do with `~/.cursor/mcp.json` (Cursor's global config). If you're looking for Claude Code's global MCP config, it's `~/.claude.json`, not `~/.cursor/mcp.json`.
 
 ## Architecture
 
@@ -63,6 +75,9 @@ Then configure the Claude Code hooks manually (see [Configure Claude Code Hooks]
 │  │ Reads/writes │  │ Tracks sessions,   │       │
 │  │ ~/.claude.json  │ workspaces, PIDs   │       │
 │  │ .mcp.json    │  │ in state file      │       │
+│  │ .claude/     │  │                    │       │
+│  │  settings.   │  │                    │       │
+│  │  local.json  │  │                    │       │
 │  └──────────────┘  └────────────────────┘       │
 │  ┌──────────────┐  ┌────────────────────┐       │
 │  │ Tool Prober  │  │ Watchdog           │       │
@@ -91,7 +106,7 @@ Then configure the Claude Code hooks manually (see [Configure Claude Code Hooks]
 
 If you installed via `claude plugin add`, hooks are registered automatically — skip this section.
 
-Add the SessionStart hook to your Claude Code settings (`~/.claude/settings.json`):
+Add the hooks to your Claude Code settings (`~/.claude/settings.json`):
 
 ```json
 {
@@ -99,17 +114,31 @@ Add the SessionStart hook to your Claude Code settings (`~/.claude/settings.json
     "SessionStart": [
       {
         "type": "command",
-        "command": "/path/to/mcp-manager/scripts/start-server.sh"
+        "command": "/path/to/mcp-manager/scripts/start-server.sh",
+        "timeout": 10
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "type": "command",
+        "command": "/path/to/mcp-manager/scripts/mcp-context-hint.sh",
+        "timeout": 3
       }
     ]
   }
 }
 ```
 
-The hook will:
-1. Start the Express server (if not already running)
-2. Register the current Claude Code session
-3. Inject a context message with the dashboard URL
+The plugin registers two hooks:
+
+**SessionStart** (`scripts/start-server.sh`):
+1. Starts the Express server if not already running
+2. Registers the current Claude Code session (session ID, working directory, parent PID)
+3. Injects a context message listing available skills
+
+**UserPromptSubmit** (`scripts/mcp-context-hint.sh`):
+1. Checks if the user's prompt contains MCP-related keywords
+2. If matched, injects a reminder about available MCP Manager skills (zero overhead when not matched)
 
 ### Usage
 
@@ -119,7 +148,7 @@ Once configured, the dashboard auto-starts with every Claude Code session. Open 
 http://localhost:4111
 ```
 
-You can also use the `/open` skill inside Claude Code to launch it.
+You can also type `/mcp-manager:open` inside Claude Code to launch it.
 
 ### Manual Start/Stop
 
@@ -177,8 +206,16 @@ All endpoints are prefixed with `/api`.
 
 | Method | Path | Description |
 |---|---|---|
-| `POST` | `/api/servers/toggle` | Toggle a server on/off. Body: `{ name, scope, enabled? }`. When `enabled` (boolean) is provided, sets the exact state idempotently; when omitted, flips the current state. |
-| `GET` | `/api/servers/:scope/:name/tools` | Probe a server's tools via MCP protocol |
+| `POST` | `/api/servers/toggle` | Toggle a server on/off. Body: `{ name, scope, enabled? }`. `scope` is `"global"` or a full workspace path. When `enabled` (boolean) is provided, sets the exact state idempotently; when omitted, flips the current state. |
+| `POST` | `/api/servers` | Add a new server. Body: `{ name, scope, config }`. `config.type` must be `"stdio"` or `"http"`. Returns 409 if server already exists. |
+| `DELETE` | `/api/servers` | Delete a server. Body: `{ name, scope }`. Returns 404 if not found. Also cleans up `disabledMcpjsonServers` for project servers. |
+| `GET` | `/api/servers/:scope/:name/tools` | Probe a server's tools via MCP protocol (supports stdio and http transports) |
+
+### Context Usage
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/api/context-usage` | Estimate token consumption per enabled global server. Returns `{ servers, totalTokens, threshold, warning }`. Token estimate = tool count × 600. |
 
 ### Sessions
 
@@ -194,11 +231,12 @@ All endpoints are prefixed with `/api`.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/workspaces` | List all known workspace paths |
+| `DELETE` | `/api/workspaces/:path` | Remove a workspace from the tracked list |
 
 ## Security & Reliability
 
 - **Request body limit**: `express.json` is capped at 100 KB.
-- **No leaked credentials**: API responses strip `config.headers` from server entries (may contain auth tokens).
+- **No leaked credentials**: API responses strip `config.env` and `config.headers` from server entries (may contain secrets or auth tokens).
 - **Tool prober env whitelist**: Only safe environment variables (`PATH`, `HOME`, `USER`, `SHELL`, `LANG`, etc.) are forwarded to stdio child processes, preventing secret leakage.
 - **Atomic state writes**: Both `~/.claude.json` and `~/.mcp-manager-state.json` are written atomically (write to tmp file, then rename) to avoid corruption on crash.
 - **Cache size limit**: The tool prober cache is bounded at 200 entries with FIFO eviction.
@@ -239,7 +277,7 @@ During development, the Vite dev server runs on port 5173 and proxies `/api` req
 - **Client**: React 18, Vite 6, inline styles
 - **MCP SDK**: `@modelcontextprotocol/sdk` for tool probing (stdio + HTTP transports)
 - **Design**: Blade Design System tokens, dark theme, Inter font
-- **Lifecycle**: Claude Code hooks (SessionStart), PID-based watchdog auto-shutdown
+- **Lifecycle**: Claude Code hooks (SessionStart + UserPromptSubmit), PID-based watchdog auto-shutdown
 
 ## Project Structure
 
@@ -266,8 +304,9 @@ mcp-manager/
 ├── hooks/
 │   └── hooks.json            # Plugin hook definitions
 ├── scripts/
-│   ├── start-server.sh       # SessionStart hook script
-│   └── stop-server.sh        # Manual stop script
+│   ├── start-server.sh       # SessionStart hook: starts server, registers session
+│   ├── stop-server.sh        # Manual stop script
+│   └── mcp-context-hint.sh   # UserPromptSubmit hook: injects context hint for MCP queries
 ├── server/
 │   ├── index.js              # Express server + watchdog
 │   ├── env.js                # Typed configuration loader (incl. probeTimeoutMs)
@@ -275,8 +314,13 @@ mcp-manager/
 │   ├── workspace-registry.js # Session + workspace state
 │   └── tool-prober.js        # MCP tool discovery
 ├── skills/
-│   └── open/
-│       └── SKILL.md          # /open skill to launch dashboard
+│   ├── add/SKILL.md          # /mcp-manager:add — add a new MCP server
+│   ├── context/SKILL.md      # /mcp-manager:context — token usage per server
+│   ├── delete/SKILL.md       # /mcp-manager:delete — remove an MCP server
+│   ├── list/SKILL.md         # /mcp-manager:list — list all servers
+│   ├── open/SKILL.md         # /mcp-manager:open — open dashboard in browser
+│   ├── status/SKILL.md       # /mcp-manager:status — full status overview
+│   └── toggle/SKILL.md       # /mcp-manager:toggle — enable/disable a server
 └── package.json
 ```
 

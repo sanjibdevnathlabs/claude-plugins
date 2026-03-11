@@ -9,6 +9,12 @@ allowed-tools: Bash
 
 Show a comprehensive status overview of the MCP Manager and all configured servers.
 
+## Config File Locations (Claude Code only)
+
+- **Global servers**: `~/.claude.json` (NOT `~/.cursor/mcp.json`)
+- **Project servers**: `.mcp.json` at the project root
+- **Project toggle state**: `.claude/settings.local.json` at the project root
+
 ## Instructions
 
 1. Check if the MCP Manager server is running:
@@ -30,7 +36,9 @@ Show a comprehensive status overview of the MCP Manager and all configured serve
    ```
 
 4. Present a comprehensive status report:
-   - **Health**: Server uptime, version, status
-   - **Active Sessions**: Number of connected Claude Code sessions, their working directories
-   - **MCP Servers**: Summary count of enabled/disabled servers per scope
+   - **Health**: Server status and uptime (from `/api/health` which returns `{ status, uptime }`)
+   - **Active Sessions**: Number of connected Claude Code sessions, their working directories and PIDs
+   - **MCP Servers**: Summary count of enabled/disabled servers per scope. For each scope, note the config file:
+     - `"global"` scope → servers from `~/.claude.json`
+     - workspace path scope → servers from `.mcp.json` in that directory
    - **Quick Actions**: Remind user of available skills (`/mcp-manager:list`, `/mcp-manager:toggle`, `/mcp-manager:context`, `/mcp-manager:open`)

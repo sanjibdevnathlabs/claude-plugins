@@ -149,7 +149,7 @@ export default function WorkspaceSelector({ workspaces, activeScope, onSelect, s
                     lineHeight: `${font.lineHeight.body}px`,
                   }}
                   onClick={() => { onSelect(scope); setOpen(false); setConfirmingDelete(null); }}
-                  title={scope === 'global' ? '~/.claude.json' : scope}
+                  title={scope === 'global' ? 'Global config: ~/.claude.json (Claude Code)' : `Project config: ${scope}/.mcp.json`}
                 >
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {label}
