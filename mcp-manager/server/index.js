@@ -14,6 +14,8 @@ import {
   getEnabledServerConfigs,
   addServer,
   deleteServer,
+  getPluginServers,
+  togglePluginServer,
 } from './config-manager.js';
 import {
   loadState,
@@ -65,12 +67,16 @@ app.get('/api/client-config', (req, res) => {
 app.get('/api/config', async (req, res) => {
   try {
     const workspaces = getWorkspaces();
-    const result = await getAllServers(workspaces);
+    const [result, pluginServers] = await Promise.all([
+      getAllServers(workspaces),
+      getPluginServers(),
+    ]);
     // Sanitize each scope's server list
     const sanitized = {};
     for (const [key, servers] of Object.entries(result)) {
       sanitized[key] = sanitizeServers(servers);
     }
+    sanitized._plugins = sanitizeServers(pluginServers);
     sanitized._meta = { homedir: homedir() };
     res.json(sanitized);
   } catch (err) {
@@ -124,6 +130,25 @@ app.post('/api/servers/toggle', async (req, res) => {
     if (err.message && (err.message.startsWith('Cannot modify') || err.message.startsWith('Cannot toggle global'))) {
       return res.status(400).json({ error: err.message });
     }
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// --- Toggle plugin server ---
+app.post('/api/plugins/toggle', async (req, res) => {
+  try {
+    const { name, scope } = req.body;
+    if (!name || typeof name !== 'string' || name.length > 256) {
+      return res.status(400).json({ error: 'Invalid or missing name' });
+    }
+    if (!scope || typeof scope !== 'string' || scope.length > 4096 || !scope.startsWith('/')) {
+      return res.status(400).json({ error: 'Invalid or missing scope (plugin install path)' });
+    }
+    const result = await togglePluginServer(name, scope);
+    clearCache(scope, name);
+    res.json(result);
+  } catch (err) {
+    console.error('Plugin toggle error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -208,22 +233,23 @@ app.get('/api/servers/:scope/:name/tools', async (req, res) => {
     const { scope, name } = req.params;
     const decodedScope = scope; // Express auto-decodes route params
 
-    if (decodedScope !== 'global') {
+    // Find server config — check global, workspaces, then plugins
+    let server;
+    if (decodedScope === 'global') {
+      const servers = await getGlobalServers();
+      server = servers.find(s => s.name === name);
+    } else {
       const registeredWorkspaces = getWorkspaces();
-      if (!registeredWorkspaces.includes(decodedScope)) {
-        return res.status(400).json({ error: 'Unknown workspace scope' });
+      if (registeredWorkspaces.includes(decodedScope)) {
+        const servers = await getWorkspaceServers(decodedScope);
+        server = servers.find(s => s.name === name);
+      } else {
+        // Could be a plugin install path
+        const pluginServers = await getPluginServers();
+        server = pluginServers.find(s => s.scope === decodedScope && s.name === name);
       }
     }
 
-    // Find server config
-    let servers;
-    if (decodedScope === 'global') {
-      servers = await getGlobalServers();
-    } else {
-      servers = await getWorkspaceServers(decodedScope);
-    }
-
-    const server = servers.find(s => s.name === name);
     if (!server) {
       return res.status(404).json({ error: `Server "${name}" not found` });
     }
@@ -286,24 +312,38 @@ const WARNING_THRESHOLD = 25000;
 
 app.get('/api/context-usage', async (req, res) => {
   try {
-    const enabledConfigs = await getEnabledServerConfigs();
+    const [enabledConfigs, pluginServers] = await Promise.all([
+      getEnabledServerConfigs(),
+      getPluginServers(),
+    ]);
+
+    // Include enabled plugin servers in context calculation
+    const enabledPlugins = pluginServers
+      .filter(s => s.enabled)
+      .map(s => ({ name: s.name, config: s.config, scope: s.scope, source: 'plugin' }));
+
+    const allConfigs = [
+      ...enabledConfigs.map(c => ({ ...c, scope: 'global', source: 'global' })),
+      ...enabledPlugins,
+    ];
+
     const results = await Promise.allSettled(
-      enabledConfigs.map(async ({ name, config }) => {
+      allConfigs.map(async ({ name, config, scope, source }) => {
         try {
-          const tools = await probeServerTools(name, config, 'global');
+          const tools = await probeServerTools(name, config, scope);
           if (tools && tools.error) {
-            return { name, toolCount: 0, estimatedTokens: 0, error: tools.error };
+            return { name, toolCount: 0, estimatedTokens: 0, error: tools.error, source };
           }
           const toolCount = Array.isArray(tools) ? tools.length : 0;
-          return { name, toolCount, estimatedTokens: toolCount * TOKENS_PER_TOOL, error: null };
+          return { name, toolCount, estimatedTokens: toolCount * TOKENS_PER_TOOL, error: null, source };
         } catch (err) {
-          return { name, toolCount: 0, estimatedTokens: 0, error: err.message };
+          return { name, toolCount: 0, estimatedTokens: 0, error: err.message, source };
         }
       })
     );
 
     const servers = results.map(r => r.status === 'fulfilled' ? r.value : {
-      name: 'unknown', toolCount: 0, estimatedTokens: 0, error: 'Probe failed',
+      name: 'unknown', toolCount: 0, estimatedTokens: 0, error: 'Probe failed', source: 'unknown',
     });
     const totalTokens = servers.reduce((sum, s) => sum + s.estimatedTokens, 0);
 

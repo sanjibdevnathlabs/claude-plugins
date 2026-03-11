@@ -90,6 +90,15 @@ const styles = {
     fontWeight: font.weight.semibold,
     letterSpacing: '0.05em',
   },
+  pluginBadge: {
+    fontSize: font.size.xs,
+    padding: `${spacing[1]}px ${spacing[3]}px`,
+    borderRadius: radius.sm,
+    background: 'hsla(270, 50%, 40%, 0.12)',
+    color: 'hsla(270, 60%, 55%, 1)',
+    fontWeight: font.weight.semibold,
+    letterSpacing: '0.02em',
+  },
   errorBadge: {
     fontSize: font.size.xs,
     padding: `${spacing[1]}px ${spacing[3]}px`,
@@ -202,7 +211,7 @@ function getInitial(name) {
   return name.charAt(0).toUpperCase();
 }
 
-export default function ServerCard({ server, onToggle, toggling, probeError, onDelete, showScopeBadge }) {
+export default function ServerCard({ server, onToggle, toggling, probeError, onDelete, showScopeBadge, showPluginBadge }) {
   const [expanded, setExpanded] = useState(false);
   const [tools, setTools] = useState(null);
   const [toolsLoading, setToolsLoading] = useState(false);
@@ -211,7 +220,7 @@ export default function ServerCard({ server, onToggle, toggling, probeError, onD
   const [deleting, setDeleting] = useState(false);
 
   const fetchTools = useCallback(async () => {
-    if (tools || toolsLoading) return;
+    if (tools || toolsLoading || toolsError) return;
     setToolsLoading(true);
     setToolsError(null);
     try {
@@ -229,7 +238,7 @@ export default function ServerCard({ server, onToggle, toggling, probeError, onD
     } finally {
       setToolsLoading(false);
     }
-  }, [tools, toolsLoading, server]);
+  }, [tools, toolsLoading, toolsError, server]);
 
   // Auto-fetch tool counts for enabled servers on mount
   useEffect(() => {
@@ -267,7 +276,8 @@ export default function ServerCard({ server, onToggle, toggling, probeError, onD
 
   const avatarColor = getColor(server.name);
   const toolCount = tools ? tools.length : null;
-  const hasError = !!probeError;
+  const hasError = !!probeError || !!toolsError;
+  const errorMessage = probeError || toolsError || null;
 
   const dotColor = hasError
     ? color.negative.base
@@ -280,7 +290,9 @@ export default function ServerCard({ server, onToggle, toggling, probeError, onD
     : server.enabled
       ? toolCount !== null
         ? `${toolCount} tools`
-        : 'enabled'
+        : toolsLoading
+          ? 'connecting...'
+          : 'enabled'
       : 'disabled';
 
   return (
@@ -306,14 +318,26 @@ export default function ServerCard({ server, onToggle, toggling, probeError, onD
           <div style={styles.info}>
             <div style={styles.name}>{server.name}</div>
             <div style={styles.meta}>
-              <div style={{ ...styles.dot, background: dotColor }} />
+              {hasError ? (
+                <svg width="8" height="8" viewBox="0 0 8 8" fill="none" style={{ flexShrink: 0 }}>
+                  <path d="M1 1L7 7M7 1L1 7" stroke={color.negative.base} strokeWidth="1.8" strokeLinecap="round" />
+                </svg>
+              ) : (
+                <div style={{ ...styles.dot, background: dotColor }} />
+              )}
               <span style={styles.metaText}>{statusText}</span>
               <span style={styles.typeBadge}>{server.config?.type || (server.config?.command ? 'stdio' : server.config?.url ? 'http' : 'unknown')}</span>
               {showScopeBadge && server.scope === 'global' && (
                 <span style={styles.scopeBadge}>Global</span>
               )}
+              {showPluginBadge && server.pluginName && (
+                <span style={styles.pluginBadge}>{server.pluginName}</span>
+              )}
+              {showPluginBadge && server.pluginScope === 'project' && (
+                <span style={styles.scopeBadge} title={server.projectPath || ''}>Project</span>
+              )}
               {hasError && (
-                <span style={styles.errorBadge} title={probeError}>Error</span>
+                <span style={styles.errorBadge} title={errorMessage}>Error</span>
               )}
             </div>
           </div>

@@ -55,7 +55,14 @@ export async function probeServerTools(name, serverConfig, scope) {
     cache.set(key, { tools, timestamp: Date.now() });
     return tools;
   } catch (err) {
-    return { error: err.message };
+    // Cache errors too so we don't keep retrying failed connections
+    const errorResult = { error: err.message };
+    if (cache.size >= MAX_CACHE_SIZE) {
+      const oldestKey = cache.keys().next().value;
+      cache.delete(oldestKey);
+    }
+    cache.set(key, { tools: errorResult, timestamp: Date.now() });
+    return errorResult;
   }
 }
 

@@ -10,7 +10,22 @@ function shortenPath(path) {
   return home;
 }
 
-export default function WorkspaceSelector({ workspaces, activeScope, onSelect, serverCounts, globalCount, onDeleteWorkspace }) {
+function countActiveForScope(scope, serverCounts, pluginServers) {
+  const scopeServers = Array.isArray(serverCounts?.[scope]) ? serverCounts[scope] : [];
+  const scopeEnabled = scopeServers.filter(s => s.enabled).length;
+
+  // Plugin servers: global plugins always count, project plugins count for matching scope
+  const pluginEnabled = (pluginServers || []).filter(s => {
+    if (s.pluginScope === 'project') {
+      return s.projectPath === scope && s.enabled;
+    }
+    return s.enabled;
+  }).length;
+
+  return scopeEnabled + pluginEnabled;
+}
+
+export default function WorkspaceSelector({ workspaces, activeScope, onSelect, serverCounts, globalCount, pluginServers, onDeleteWorkspace }) {
   const [open, setOpen] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(null);
   const ref = useRef(null);
@@ -34,10 +49,7 @@ export default function WorkspaceSelector({ workspaces, activeScope, onSelect, s
       ? '~ (home)'
       : shortenPath(activeScope);
 
-  // Count: workspace scope shows only its own server count
-  const activeWsCount = Array.isArray(serverCounts?.[activeScope]) ? serverCounts[activeScope].length : 0;
-  const gc = globalCount || 0;
-  const activeCount = activeScope === 'global' ? activeWsCount : activeWsCount;
+  const activeCount = countActiveForScope(activeScope, serverCounts, pluginServers);
 
   return (
     <div style={{ position: 'relative', display: 'inline-block' }} ref={ref}>
@@ -65,19 +77,17 @@ export default function WorkspaceSelector({ workspaces, activeScope, onSelect, s
       >
         <span style={{ color: color.text.subtle, fontWeight: font.weight.regular }}>Scope:</span>
         <span>{activeLabel}</span>
-        {activeCount > 0 && (
-          <span style={{
-            fontSize: font.size.xs,
-            padding: '0 5px',
-            borderRadius: radius.max,
-            background: color.primary.muted,
-            color: color.primary.base,
-            fontWeight: font.weight.semibold,
-            lineHeight: '16px',
-          }}>
-            {activeCount}
-          </span>
-        )}
+        <span style={{
+          fontSize: font.size.xs,
+          padding: '0 5px',
+          borderRadius: radius.max,
+          background: activeCount > 0 ? 'hsla(153, 100%, 30%, 0.18)' : color.bg.subtle,
+          color: activeCount > 0 ? color.positive.base : color.text.subtle,
+          fontWeight: font.weight.semibold,
+          lineHeight: '16px',
+        }}>
+          {activeCount} active
+        </span>
         <svg width="10" height="6" viewBox="0 0 10 6" fill="none" style={{
           marginLeft: spacing[1],
           transition: 'transform 0.15s ease',
@@ -93,7 +103,7 @@ export default function WorkspaceSelector({ workspaces, activeScope, onSelect, s
           position: 'absolute',
           top: 'calc(100% + 4px)',
           left: 0,
-          minWidth: 220,
+          minWidth: 240,
           background: color.bg.elevated,
           border: `1px solid ${color.border.subtle}`,
           borderRadius: radius.md,
@@ -104,9 +114,7 @@ export default function WorkspaceSelector({ workspaces, activeScope, onSelect, s
         }}>
           {scopes.map(scope => {
             const isActive = scope === activeScope;
-            const wsServers = serverCounts?.[scope];
-            const wsCount = Array.isArray(wsServers) ? wsServers.length : 0;
-            const count = wsCount;
+            const count = countActiveForScope(scope, serverCounts, pluginServers);
             const isHomedir = serverCounts?._meta?.homedir === scope;
             const label = scope === 'global'
               ? 'Global'
@@ -154,20 +162,18 @@ export default function WorkspaceSelector({ workspaces, activeScope, onSelect, s
                   <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {label}
                   </span>
-                  {count > 0 && (
-                    <span style={{
-                      fontSize: font.size.xs,
-                      padding: '0 5px',
-                      borderRadius: radius.max,
-                      background: isActive ? color.primary.muted : color.bg.subtle,
-                      color: isActive ? color.primary.base : color.text.subtle,
-                      fontWeight: font.weight.semibold,
-                      lineHeight: '16px',
-                      flexShrink: 0,
-                    }}>
-                      {count}
-                    </span>
-                  )}
+                  <span style={{
+                    fontSize: font.size.xs,
+                    padding: '0 5px',
+                    borderRadius: radius.max,
+                    background: isActive ? color.primary.muted : color.bg.subtle,
+                    color: isActive ? color.primary.base : color.text.subtle,
+                    fontWeight: font.weight.semibold,
+                    lineHeight: '16px',
+                    flexShrink: 0,
+                  }}>
+                    {count}
+                  </span>
                 </button>
                 {!isGlobal && onDeleteWorkspace && (
                   <button

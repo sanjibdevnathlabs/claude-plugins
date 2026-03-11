@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import Header from './components/Header';
 import WorkspaceSelector from './components/WorkspaceSelector';
 import ServerCard from './components/ServerCard';
@@ -41,32 +41,7 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: spacing[3],
-    marginBottom: spacing[2],
-  },
-  configBar: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: spacing[3],
-    padding: `${spacing[2]}px ${spacing[4]}px`,
-    marginBottom: spacing[5],
-    borderRadius: radius.sm,
-    background: color.bg.elevated,
-    border: `1px solid ${color.border.subtle}`,
-    fontSize: font.size.xs,
-    color: color.text.muted,
-    lineHeight: `${font.lineHeight.sm}px`,
-    flexWrap: 'wrap',
-  },
-  configPath: {
-    fontFamily: font.family.code,
-    fontSize: font.size.xs,
-    color: color.text.subtle,
-  },
-  configSep: {
-    width: 1,
-    height: 12,
-    background: color.border.subtle,
-    flexShrink: 0,
+    marginBottom: spacing[4],
   },
   addBtn: {
     display: 'inline-flex',
@@ -84,6 +59,54 @@ const styles = {
     lineHeight: `${font.lineHeight.caption}px`,
     transition: 'border-color 0.15s ease, color 0.15s ease',
   },
+  // --- Tab bar ---
+  tabBar: {
+    display: 'flex',
+    gap: spacing[1],
+    marginBottom: spacing[5],
+    borderBottom: `1px solid ${color.border.subtle}`,
+    paddingBottom: 0,
+  },
+  tab: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: spacing[2],
+    padding: `${spacing[3]}px ${spacing[4]}px`,
+    cursor: 'pointer',
+    fontSize: font.size.caption,
+    fontWeight: font.weight.medium,
+    fontFamily: 'inherit',
+    color: color.text.muted,
+    background: 'none',
+    border: 'none',
+    borderBottom: '2px solid transparent',
+    marginBottom: -1,
+    transition: 'color 0.15s ease, border-color 0.15s ease',
+    whiteSpace: 'nowrap',
+    lineHeight: `${font.lineHeight.caption}px`,
+  },
+  tabActive: {
+    color: color.primary.base,
+    borderBottomColor: color.primary.base,
+    fontWeight: font.weight.semibold,
+  },
+  tabCount: {
+    fontSize: font.size.xs,
+    padding: '1px 6px',
+    borderRadius: radius.max,
+    fontWeight: font.weight.semibold,
+    lineHeight: '14px',
+    minWidth: 18,
+    textAlign: 'center',
+  },
+  tabCountActive: {
+    background: color.primary.muted,
+    color: color.primary.base,
+  },
+  tabCountInactive: {
+    background: color.bg.subtle,
+    color: color.text.subtle,
+  },
 };
 
 export default function App() {
@@ -93,10 +116,12 @@ export default function App() {
     try { return sessionStorage.getItem('mcp-manager-scope') || 'global'; }
     catch { return 'global'; }
   });
+  const [activeTab, setActiveTab] = useState('global');
   const [contextUsage, setContextUsage] = useState(null);
 
   const handleScopeChange = useCallback((scope) => {
     setActiveScope(scope);
+    setActiveTab('global'); // reset tab on scope change
     try { sessionStorage.setItem('mcp-manager-scope', scope); } catch {}
   }, []);
   const [error, setError] = useState(null);
@@ -143,7 +168,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     fetchConfig();
-    fetchContextUsage(); // fire-and-forget
+    fetchContextUsage();
 
     const restartInterval = () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
@@ -203,10 +228,35 @@ export default function App() {
         throw new Error(errData.error || 'Toggle failed');
       }
       await fetchConfig();
-      // Re-fetch context usage in background (global toggles change enabled server set)
       if (scope === 'global') fetchContextUsage();
     } catch (err) {
       setError(`Failed to toggle ${name}: ${err.message}`);
+    } finally {
+      setTogglingServers(prev => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
+
+  const handlePluginToggle = async (name, scope, currentEnabled) => {
+    const key = `${scope}::${name}`;
+    if (togglingServers.has(key)) return;
+    setTogglingServers(prev => new Set(prev).add(key));
+    try {
+      const res = await fetch('/api/plugins/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, scope }),
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || 'Toggle failed');
+      }
+      await fetchConfig();
+    } catch (err) {
+      setError(`Failed to toggle plugin server ${name}: ${err.message}`);
     } finally {
       setTogglingServers(prev => {
         const next = new Set(prev);
@@ -225,7 +275,6 @@ export default function App() {
         const errData = await res.json().catch(() => ({}));
         throw new Error(errData.error || 'Delete failed');
       }
-      // Switch to global if the deleted scope was active
       if (activeScope === workspacePath) {
         handleScopeChange('global');
       }
@@ -268,9 +317,71 @@ export default function App() {
     if (activeScope === 'global') fetchContextUsage();
   };
 
-  // Build server list: workspace scopes now include both global + local servers
+  // --- Build categorized server lists ---
+  const allScopeServers = config?.[activeScope] || config?.global || [];
   const globalServers = config?.global || [];
-  const servers = config?.[activeScope] || config?.global || [];
+  const pluginServers = config?._plugins || [];
+
+  // Split scope servers into global vs local (project)
+  const globalOnlyServers = allScopeServers.filter(s => s.scope === 'global');
+  const localOnlyServers = allScopeServers.filter(s => s.scope !== 'global');
+
+  // Split plugin servers into global (user-scope) vs project-scope
+  const pluginGlobalServers = pluginServers.filter(s => s.pluginScope !== 'project');
+  const pluginProjectServers = pluginServers.filter(
+    s => s.pluginScope === 'project' && s.projectPath === activeScope
+  );
+
+  // Build dynamic tabs
+  const tabs = useMemo(() => {
+    const t = [];
+    const isWorkspaceScope = activeScope !== 'global';
+
+    // Global tab is always visible
+    t.push({
+      id: 'global',
+      label: 'Global',
+      servers: globalOnlyServers,
+      isPlugin: false,
+    });
+
+    // Local/Project tab: only when viewing a workspace scope and there are local servers
+    if (isWorkspaceScope && localOnlyServers.length > 0) {
+      t.push({
+        id: 'local',
+        label: 'Project',
+        servers: localOnlyServers,
+        isPlugin: false,
+      });
+    }
+
+    // Plugin Global tab: globally installed plugins with MCPs
+    if (pluginGlobalServers.length > 0) {
+      t.push({
+        id: 'plugin-global',
+        label: isWorkspaceScope ? 'Plugins (Global)' : 'Plugins',
+        servers: pluginGlobalServers,
+        isPlugin: true,
+      });
+    }
+
+    // Plugin Project tab: project-scoped plugins with MCPs
+    if (isWorkspaceScope && pluginProjectServers.length > 0) {
+      t.push({
+        id: 'plugin-project',
+        label: 'Plugins (Project)',
+        servers: pluginProjectServers,
+        isPlugin: true,
+      });
+    }
+
+    return t;
+  }, [activeScope, globalOnlyServers, localOnlyServers, pluginGlobalServers, pluginProjectServers]);
+
+  // If the active tab doesn't exist in the current tab set, fall back to 'global'
+  const validTab = tabs.find(t => t.id === activeTab) ? activeTab : 'global';
+  const currentTab = tabs.find(t => t.id === validTab);
+  const currentServers = currentTab?.servers || [];
 
   // Derive server errors from context usage
   const serverErrors = {};
@@ -280,8 +391,13 @@ export default function App() {
     }
   }
 
-  const totalServers = servers.length;
-  const totalEnabled = servers.filter(s => s.enabled).length;
+  // Total counts across ALL tabs for the header
+  const allServers = tabs.flatMap(t => t.servers);
+  const totalServers = allServers.length;
+  const totalEnabled = allServers.filter(s => s.enabled).length;
+
+  // Active count for scope dropdown: total enabled across all tabs
+  const scopeActiveCount = totalEnabled;
 
   if (loading) {
     return (
@@ -302,6 +418,7 @@ export default function App() {
           onSelect={handleScopeChange}
           serverCounts={config}
           globalCount={globalServers.length}
+          pluginServers={pluginServers}
           onDeleteWorkspace={handleDeleteWorkspace}
         />
         <button
@@ -314,22 +431,44 @@ export default function App() {
           + Add
         </button>
       </div>
-      <div style={styles.configBar}>
-        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
-          <path d="M2 3.5A1.5 1.5 0 013.5 2h4.586a1.5 1.5 0 011.06.44l3.415 3.414A1.5 1.5 0 0113 6.914V12.5a1.5 1.5 0 01-1.5 1.5h-8A1.5 1.5 0 012 12.5v-9z" stroke="currentColor" strokeWidth="1.3" fill="none"/>
-        </svg>
-        {activeScope === 'global' ? (
-          <>
-            <span>Config: <span style={styles.configPath}>~/.claude.json</span></span>
-          </>
-        ) : (
-          <>
-            <span>Project: <span style={styles.configPath}>.mcp.json</span></span>
-            <div style={styles.configSep} />
-            <span>Global: <span style={styles.configPath}>~/.claude.json</span></span>
-          </>
-        )}
+
+      {/* Tab bar */}
+      <div style={styles.tabBar}>
+        {tabs.map(tab => {
+          const isActive = tab.id === validTab;
+          const enabledCount = tab.servers.filter(s => s.enabled).length;
+          const totalCount = tab.servers.length;
+          return (
+            <button
+              key={tab.id}
+              style={{
+                ...styles.tab,
+                ...(isActive ? styles.tabActive : {}),
+              }}
+              onClick={() => setActiveTab(tab.id)}
+              onMouseEnter={e => {
+                if (!isActive) {
+                  e.currentTarget.style.color = color.text.secondary;
+                }
+              }}
+              onMouseLeave={e => {
+                if (!isActive) {
+                  e.currentTarget.style.color = color.text.muted;
+                }
+              }}
+            >
+              {tab.label}
+              <span style={{
+                ...styles.tabCount,
+                ...(isActive ? styles.tabCountActive : styles.tabCountInactive),
+              }}>
+                {enabledCount}/{totalCount}
+              </span>
+            </button>
+          );
+        })}
       </div>
+
       {showAddForm && (
         <AddServerForm
           activeScope={activeScope}
@@ -338,18 +477,22 @@ export default function App() {
         />
       )}
       <ContextWarning contextUsage={contextUsage} />
-      {servers.length === 0 ? (
-        <div style={styles.empty}>No MCP servers configured</div>
+      {currentServers.length === 0 ? (
+        <div style={styles.empty}>No MCP servers in this tab</div>
       ) : (
-        servers.map(server => (
+        currentServers.map(server => (
           <ServerCard
             key={`${server.scope}-${server.name}`}
             server={server}
-            onToggle={() => handleToggle(server.name, server.scope, server.enabled)}
+            onToggle={() =>
+              currentTab?.isPlugin
+                ? handlePluginToggle(server.name, server.scope, server.enabled)
+                : handleToggle(server.name, server.scope, server.enabled)
+            }
             toggling={togglingServers.has(`${server.scope}::${server.name}`)}
             probeError={serverErrors[server.name] || null}
-            onDelete={handleDeleteServer}
-            showScopeBadge={activeScope !== 'global'}
+            onDelete={currentTab?.isPlugin ? undefined : handleDeleteServer}
+            showPluginBadge={currentTab?.isPlugin}
           />
         ))
       )}

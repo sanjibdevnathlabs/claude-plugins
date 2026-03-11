@@ -4,6 +4,7 @@ import { homedir } from 'os';
 import { join } from 'path';
 
 const CLAUDE_JSON = join(homedir(), '.claude.json');
+const INSTALLED_PLUGINS = join(homedir(), '.claude', 'plugins', 'installed_plugins.json');
 
 let lockPromise = Promise.resolve();
 
@@ -297,6 +298,104 @@ export async function deleteServer(name, scope) {
       }
     }
     return { name, scope, deleted: true };
+  });
+}
+
+// --- Plugin MCP Server Discovery ---
+// Plugins installed via `claude plugin install` can bundle their own MCP servers
+// in .mcp.json or mcp.json within their install directory.
+
+async function readInstalledPlugins() {
+  try {
+    const raw = await readFile(INSTALLED_PLUGINS, 'utf8');
+    return JSON.parse(raw);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    if (err instanceof SyntaxError) {
+      console.error('Warning: installed_plugins.json contains invalid JSON, skipping');
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function readPluginMcpJson(installPath) {
+  // Plugins use .mcp.json or mcp.json (both conventions exist)
+  for (const filename of ['.mcp.json', 'mcp.json']) {
+    const mcpPath = join(installPath, filename);
+    try {
+      const raw = await readFile(mcpPath, 'utf8');
+      return JSON.parse(raw);
+    } catch (err) {
+      if (err.code === 'ENOENT') continue;
+      if (err instanceof SyntaxError) {
+        console.error(`Warning: ${mcpPath} contains invalid JSON, skipping`);
+        return null;
+      }
+      throw err;
+    }
+  }
+  return null;
+}
+
+export async function getPluginServers() {
+  const pluginsData = await readInstalledPlugins();
+  if (!pluginsData?.plugins) return [];
+
+  const servers = [];
+
+  for (const [pluginKey, installations] of Object.entries(pluginsData.plugins)) {
+    if (!Array.isArray(installations) || installations.length === 0) continue;
+
+    const pluginName = pluginKey.split('@')[0] || pluginKey;
+
+    // Process every installation — a plugin can be installed globally (user)
+    // AND for specific projects, each with independent toggle state
+    for (const install of installations) {
+      if (!install.installPath) continue;
+
+      const mcpJson = await readPluginMcpJson(install.installPath);
+      if (!mcpJson?.mcpServers) continue;
+
+      // Read toggle state from this installation's .claude/settings.local.json
+      const localSettings = await readLocalSettings(install.installPath);
+      const disabledList = localSettings.disabledMcpjsonServers || [];
+
+      // "user" = globally installed, "project" = project-scoped
+      const pluginScope = install.scope || 'user';
+
+      for (const [name, cfg] of Object.entries(mcpJson.mcpServers)) {
+        servers.push({
+          name,
+          config: cfg,
+          enabled: !disabledList.includes(name),
+          scope: install.installPath, // installPath as scope for toggle writes
+          pluginName,
+          pluginVersion: install.version || null,
+          pluginScope,
+          projectPath: install.projectPath || null,
+        });
+      }
+    }
+  }
+
+  return servers.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export async function togglePluginServer(name, installPath) {
+  return withLock(async () => {
+    const localSettings = await readLocalSettings(installPath);
+    if (!localSettings.disabledMcpjsonServers) localSettings.disabledMcpjsonServers = [];
+
+    const idx = localSettings.disabledMcpjsonServers.indexOf(name);
+    if (idx >= 0) {
+      localSettings.disabledMcpjsonServers.splice(idx, 1);
+    } else {
+      localSettings.disabledMcpjsonServers.push(name);
+    }
+
+    await writeLocalSettings(installPath, localSettings);
+    return { name, enabled: !localSettings.disabledMcpjsonServers.includes(name) };
   });
 }
 

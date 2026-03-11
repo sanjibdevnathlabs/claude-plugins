@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor, act, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from '../App';
 
 // --- Helpers ---
 
-function mockFetchResponses({ config, workspaces, clientConfig, toggleResponse, contextUsage, deleteResponse, addResponse, deleteWsResponse } = {}) {
-  const defaultConfig = { global: [], _meta: {} };
+function mockFetchResponses({ config, workspaces, clientConfig, toggleResponse, contextUsage, deleteResponse, addResponse, deleteWsResponse, pluginToggleResponse } = {}) {
+  const defaultConfig = { global: [], _plugins: [], _meta: {} };
   const defaultWorkspaces = [];
   const defaultClientConfig = { pollIntervalMs: 600000 };
   const defaultContextUsage = { servers: [], totalTokens: 0, threshold: 25000, warning: false };
@@ -41,6 +41,11 @@ function mockFetchResponses({ config, workspaces, clientConfig, toggleResponse, 
     if (urlStr === '/api/servers/toggle') {
       return Promise.resolve(
         toggleResponse || { ok: true, json: () => Promise.resolve({ success: true }) }
+      );
+    }
+    if (urlStr === '/api/plugins/toggle') {
+      return Promise.resolve(
+        pluginToggleResponse || { ok: true, json: () => Promise.resolve({ success: true }) }
       );
     }
     if (urlStr === '/api/servers' && opts?.method === 'DELETE') {
@@ -82,8 +87,26 @@ const MULTI_SCOPE_CONFIG = {
     { name: 'global-server', enabled: true, scope: 'global', config: { command: 'node' } },
     { name: 'shared-server', enabled: true, scope: 'global', config: { command: 'python' } },
   ],
+  _plugins: [],
   _meta: { homedir: '/Users/dev' },
 };
+
+// Helper to find the scope selector button (not the tab)
+function getScopeSelectorButton() {
+  // The scope selector has "Scope:" label inside it
+  const scopeLabel = screen.getByText('Scope:');
+  return scopeLabel.closest('button');
+}
+
+// Helper to switch to workspace scope
+async function switchToWorkspace(user) {
+  const scopeBtn = getScopeSelectorButton();
+  await user.click(scopeBtn);
+  const wsOption = await screen.findByText((content, element) => {
+    return element.tagName === 'SPAN' && content.includes('my-project');
+  });
+  await user.click(wsOption.closest('button'));
+}
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
@@ -97,7 +120,7 @@ afterEach(() => {
 
 // --- FT-1: Workspace scope shows global + local servers ---
 describe('FT-1: Workspace scope shows global + local servers', () => {
-  it('workspace scope shows both global and local servers', async () => {
+  it('workspace scope shows both global and local servers across tabs', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
       config: MULTI_SCOPE_CONFIG,
@@ -113,18 +136,20 @@ describe('FT-1: Workspace scope shows global + local servers', () => {
     });
 
     // Switch to workspace scope
-    const scopeButton = screen.getByText('Global').closest('button');
-    await user.click(scopeButton);
-    const wsOption = await screen.findByText((content, element) => {
-      return element.tagName === 'SPAN' && content.includes('my-project');
-    });
-    await user.click(wsOption.closest('button'));
+    await switchToWorkspace(user);
 
+    // Global tab is active by default — shows global servers
     await waitFor(() => {
-      // All servers should be visible in workspace scope
-      expect(screen.getByText('local-server')).toBeInTheDocument();
       expect(screen.getByText('global-server')).toBeInTheDocument();
       expect(screen.getByText('shared-server')).toBeInTheDocument();
+    });
+
+    // Switch to Project tab to see local servers
+    const projectTab = screen.getByRole('button', { name: /Project/ });
+    await user.click(projectTab);
+
+    await waitFor(() => {
+      expect(screen.getByText('local-server')).toBeInTheDocument();
     });
   });
 });
@@ -147,20 +172,16 @@ describe('FT-2: Scope badges in workspace scope', () => {
     });
 
     // Switch to workspace scope
-    const scopeButton = screen.getByText('Global').closest('button');
-    await user.click(scopeButton);
-    const wsOption = await screen.findByText((content, element) => {
-      return element.tagName === 'SPAN' && content.includes('my-project');
-    });
-    await user.click(wsOption.closest('button'));
+    await switchToWorkspace(user);
 
-    await waitFor(() => {
-      const badges = screen.getAllByText('Global', { exact: true });
-      expect(badges.length).toBeGreaterThanOrEqual(2);
-    });
+    // In the Global tab, servers don't need "Global" badge since the tab already says Global.
+    // The tabs themselves contain the word "Global"
+    const globalTexts = screen.getAllByText('Global');
+    // At minimum: scope selector shows "Global" text, and the tab shows "Global"
+    expect(globalTexts.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('does NOT show scope badges in global scope', async () => {
+  it('tab labels are visible in global scope', async () => {
     global.fetch = mockFetchResponses({
       config: MULTI_SCOPE_CONFIG,
       workspaces: [WORKSPACE_PATH],
@@ -174,8 +195,9 @@ describe('FT-2: Scope badges in workspace scope', () => {
       expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
     });
 
-    const allGlobalText = screen.getAllByText('Global');
-    expect(allGlobalText.length).toBe(1);
+    // The "Global" tab should always be visible
+    const tabBar = screen.getAllByRole('button').filter(b => b.textContent.includes('Global'));
+    expect(tabBar.length).toBeGreaterThanOrEqual(1);
   });
 });
 
@@ -192,7 +214,7 @@ describe('FT-3: Context warning banner', () => {
     };
 
     global.fetch = mockFetchResponses({
-      config: { global: [{ name: 'big-server', enabled: true, scope: 'global', config: { command: 'node' } }], _meta: {} },
+      config: { global: [{ name: 'big-server', enabled: true, scope: 'global', config: { command: 'node' } }], _plugins: [], _meta: {} },
       workspaces: [],
       contextUsage,
     });
@@ -212,7 +234,7 @@ describe('FT-3: Context warning banner', () => {
 
   it('does NOT render context warning when under threshold', async () => {
     global.fetch = mockFetchResponses({
-      config: { global: [{ name: 'small-server', enabled: true, scope: 'global', config: { command: 'node' } }], _meta: {} },
+      config: { global: [{ name: 'small-server', enabled: true, scope: 'global', config: { command: 'node' } }], _plugins: [], _meta: {} },
       workspaces: [],
       contextUsage: { servers: [], totalTokens: 5000, threshold: 25000, warning: false },
     });
@@ -278,21 +300,16 @@ describe('Toggle uses server.scope for API calls', () => {
     });
 
     // Switch to workspace scope
-    const scopeButton = screen.getByText('Global').closest('button');
-    await user.click(scopeButton);
-    const wsOption = await screen.findByText((content, element) => {
-      return element.tagName === 'SPAN' && content.includes('my-project');
-    });
-    await user.click(wsOption.closest('button'));
+    await switchToWorkspace(user);
 
     await waitFor(() => {
       expect(screen.getByText('global-server')).toBeInTheDocument();
     });
 
-    // Find the toggle for global-server (it should be in the global-server card)
+    // Find the toggle for global-server
     const toggles = screen.getAllByRole('switch');
-    // Toggle the first server's toggle (local-server is first, global-server is second)
-    await user.click(toggles[1]); // global-server toggle
+    // In Global tab: global-server and shared-server
+    await user.click(toggles[0]); // global-server toggle
 
     // Verify the toggle API was called with scope='global' not the workspace path
     const toggleCall = global.fetch.mock.calls.find(
@@ -307,7 +324,7 @@ describe('Toggle uses server.scope for API calls', () => {
   it('shows error when toggle API fails', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'node' } }], _meta: {} },
+      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'node' } }], _plugins: [], _meta: {} },
       workspaces: [],
       toggleResponse: { ok: false, json: () => Promise.resolve({ error: 'Toggle denied' }) },
     });
@@ -330,9 +347,9 @@ describe('Toggle uses server.scope for API calls', () => {
 
 // --- Empty state ---
 describe('Empty state', () => {
-  it('shows "No MCP servers configured" when no servers', async () => {
+  it('shows empty tab message when no servers', async () => {
     global.fetch = mockFetchResponses({
-      config: { global: [], _meta: {} },
+      config: { global: [], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
@@ -344,7 +361,7 @@ describe('Empty state', () => {
       expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
     });
 
-    expect(screen.getByText('No MCP servers configured')).toBeInTheDocument();
+    expect(screen.getByText('No MCP servers in this tab')).toBeInTheDocument();
   });
 });
 
@@ -357,6 +374,7 @@ describe('Header stats', () => {
         { name: 'b', enabled: false, scope: 'global', config: { command: 'n' } },
         { name: 'c', enabled: true, scope: 'global', config: { command: 'n' } },
       ],
+      _plugins: [],
       _meta: {},
     };
     global.fetch = mockFetchResponses({ config, workspaces: [] });
@@ -372,7 +390,6 @@ describe('Header stats', () => {
     // Header has stat values in parent div containers
     expect(screen.getByText('Active')).toBeInTheDocument();
     expect(screen.getByText('Total')).toBeInTheDocument();
-    // The stat value is a sibling to the label: <div><div>2</div><div>Active</div></div>
     const activeLabel = screen.getByText('Active');
     const statContainer = activeLabel.parentElement;
     expect(statContainer.textContent).toBe('2Active');
@@ -387,7 +404,7 @@ describe('Add server form', () => {
   it('opens form when + Add button is clicked', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [], _meta: {} },
+      config: { global: [], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
@@ -406,7 +423,7 @@ describe('Add server form', () => {
   it('shows error when add server API returns non-ok', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [], _meta: {} },
+      config: { global: [], _plugins: [], _meta: {} },
       workspaces: [],
       addResponse: { ok: false, json: () => Promise.resolve({ error: 'Duplicate name' }) },
     });
@@ -432,7 +449,7 @@ describe('Add server form', () => {
   it('submits add server form successfully', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [], _meta: {} },
+      config: { global: [], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
@@ -465,7 +482,7 @@ describe('Delete server', () => {
   it('calls delete API and refreshes config', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [{ name: 'del-me', enabled: true, scope: 'global', config: { command: 'n' } }], _meta: {} },
+      config: { global: [{ name: 'del-me', enabled: true, scope: 'global', config: { command: 'n' } }], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
@@ -537,9 +554,7 @@ describe('Delete workspace', () => {
     });
 
     // The scope selector should show my-project
-    // Open dropdown and find delete button for workspace
-    const scopeBtn = screen.getByRole('button', { name: /my-project/i }) ||
-      screen.getAllByRole('button').find(b => b.textContent.includes('my-project'));
+    const scopeBtn = getScopeSelectorButton();
     if (scopeBtn) await user.click(scopeBtn);
 
     // After deletion, the API is called and config refetches
@@ -575,7 +590,7 @@ describe('Delete server error', () => {
   it('shows error when delete API fails', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'n' } }], _meta: {} },
+      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'n' } }], _plugins: [], _meta: {} },
       workspaces: [],
       deleteResponse: { ok: false, json: () => Promise.resolve({ error: 'Not found' }) },
     });
@@ -604,7 +619,7 @@ describe('Delete server error', () => {
 describe('Visibility change', () => {
   it('pauses polling when document becomes hidden', async () => {
     global.fetch = mockFetchResponses({
-      config: { global: [], _meta: {} },
+      config: { global: [], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
@@ -634,7 +649,7 @@ describe('Visibility change', () => {
 describe('Client config', () => {
   it('falls back to default poll interval when client-config fails', async () => {
     global.fetch = mockFetchResponses({
-      config: { global: [], _meta: {} },
+      config: { global: [], _plugins: [], _meta: {} },
       workspaces: [],
       clientConfig: null,
     });
@@ -662,7 +677,7 @@ describe('Client config', () => {
 
 // --- Scope persistence ---
 describe('Scope persistence', () => {
-  it('restores scope from sessionStorage', async () => {
+  it('restores scope from sessionStorage and shows workspace tabs', async () => {
     sessionStorage.setItem('mcp-manager-scope', WORKSPACE_PATH);
     global.fetch = mockFetchResponses({
       config: MULTI_SCOPE_CONFIG,
@@ -677,16 +692,18 @@ describe('Scope persistence', () => {
       expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
     });
 
-    // Should show workspace servers since scope was restored
-    expect(screen.getByText('local-server')).toBeInTheDocument();
+    // Should show Project tab since we're in workspace scope
+    expect(screen.getByRole('button', { name: /Project/ })).toBeInTheDocument();
+    // Global tab should show global servers
+    expect(screen.getByText('global-server')).toBeInTheDocument();
   });
 });
 
-// --- Config bar ---
-describe('Config bar', () => {
-  it('shows ~/.claude.json for global scope', async () => {
+// --- Tab navigation ---
+describe('Tab navigation', () => {
+  it('shows tab bar with Global tab always visible', async () => {
     global.fetch = mockFetchResponses({
-      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'n' } }], _meta: {} },
+      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'n' } }], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
@@ -698,16 +715,23 @@ describe('Config bar', () => {
       expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
     });
 
-    expect(screen.getByText('~/.claude.json')).toBeInTheDocument();
-    expect(screen.queryByText('.mcp.json')).not.toBeInTheDocument();
+    // Global tab with count badge
+    const globalTab = screen.getAllByRole('button').find(b =>
+      b.textContent.includes('Global') && b.textContent.includes('1/1')
+    );
+    expect(globalTab).toBeDefined();
   });
 
-  it('shows .mcp.json and ~/.claude.json for workspace scope', async () => {
-    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    sessionStorage.setItem('mcp-manager-scope', WORKSPACE_PATH);
+  it('shows Plugins tab when plugin servers exist', async () => {
     global.fetch = mockFetchResponses({
-      config: MULTI_SCOPE_CONFIG,
-      workspaces: [WORKSPACE_PATH],
+      config: {
+        global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'n' } }],
+        _plugins: [
+          { name: 'plugin-mcp', enabled: true, scope: '/path/to/plugin', pluginName: 'test-plugin', pluginScope: 'user', config: { command: 'node' } },
+        ],
+        _meta: {},
+      },
+      workspaces: [],
     });
 
     await act(async () => {
@@ -718,9 +742,112 @@ describe('Config bar', () => {
       expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
     });
 
-    // Workspace scope should show both config paths
-    expect(screen.getByText('.mcp.json')).toBeInTheDocument();
-    expect(screen.getByText('~/.claude.json')).toBeInTheDocument();
+    expect(screen.getByText('Plugins')).toBeInTheDocument();
+  });
+
+  it('switches between tabs to show different servers', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    global.fetch = mockFetchResponses({
+      config: {
+        global: [{ name: 'global-srv', enabled: true, scope: 'global', config: { command: 'n' } }],
+        _plugins: [
+          { name: 'plugin-mcp', enabled: true, scope: '/path/to/plugin', pluginName: 'test-plugin', pluginScope: 'user', config: { command: 'node' } },
+        ],
+        _meta: {},
+      },
+      workspaces: [],
+    });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('global-srv')).toBeInTheDocument();
+    });
+
+    // Switch to Plugins tab
+    await user.click(screen.getByText('Plugins'));
+
+    await waitFor(() => {
+      expect(screen.getByText('plugin-mcp')).toBeInTheDocument();
+      expect(screen.queryByText('global-srv')).not.toBeInTheDocument();
+    });
+  });
+});
+
+// --- Plugin toggle ---
+describe('Plugin toggle', () => {
+  it('calls plugin toggle API when toggling a plugin server', async () => {
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    global.fetch = mockFetchResponses({
+      config: {
+        global: [],
+        _plugins: [
+          { name: 'plugin-mcp', enabled: true, scope: '/path/to/plugin', pluginName: 'test-plugin', pluginScope: 'user', config: { command: 'node' } },
+        ],
+        _meta: {},
+      },
+      workspaces: [],
+    });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
+    });
+
+    // Switch to Plugins tab
+    await user.click(screen.getByText('Plugins'));
+
+    await waitFor(() => {
+      expect(screen.getByText('plugin-mcp')).toBeInTheDocument();
+    });
+
+    // Toggle the plugin server
+    await user.click(screen.getByRole('switch'));
+
+    const toggleCall = global.fetch.mock.calls.find(
+      ([url, opts]) => url === '/api/plugins/toggle' && opts?.method === 'POST'
+    );
+    expect(toggleCall).toBeDefined();
+    const body = JSON.parse(toggleCall[1].body);
+    expect(body.name).toBe('plugin-mcp');
+    expect(body.scope).toBe('/path/to/plugin');
+  });
+});
+
+// --- Header counts include plugins ---
+describe('Header counts include plugins', () => {
+  it('counts plugin servers in header totals', async () => {
+    global.fetch = mockFetchResponses({
+      config: {
+        global: [
+          { name: 'a', enabled: true, scope: 'global', config: { command: 'n' } },
+        ],
+        _plugins: [
+          { name: 'p1', enabled: true, scope: '/path', pluginName: 'plug', pluginScope: 'user', config: { command: 'n' } },
+          { name: 'p2', enabled: false, scope: '/path', pluginName: 'plug', pluginScope: 'user', config: { command: 'n' } },
+        ],
+        _meta: {},
+      },
+      workspaces: [],
+    });
+
+    await act(async () => {
+      render(<App />);
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText('Loading MCP servers...')).not.toBeInTheDocument();
+    });
+
+    const activeLabel = screen.getByText('Active');
+    expect(activeLabel.parentElement.textContent).toBe('2Active'); // 1 global + 1 plugin
+    const totalLabel = screen.getByText('Total');
+    expect(totalLabel.parentElement.textContent).toBe('3Total'); // 1 global + 2 plugins
   });
 });
 
@@ -729,7 +856,7 @@ describe('Toggle context refresh', () => {
   it('refreshes context usage when toggling a global server', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'n' } }], _meta: {} },
+      config: { global: [{ name: 'srv', enabled: true, scope: 'global', config: { command: 'n' } }], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
@@ -758,7 +885,7 @@ describe('Add server context refresh', () => {
   it('refreshes context when adding to global scope', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [], _meta: {} },
+      config: { global: [], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
@@ -789,7 +916,7 @@ describe('Delete global server refreshes context', () => {
   it('refreshes context usage after deleting a global server', async () => {
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     global.fetch = mockFetchResponses({
-      config: { global: [{ name: 'gsrv', enabled: true, scope: 'global', config: { command: 'n' } }], _meta: {} },
+      config: { global: [{ name: 'gsrv', enabled: true, scope: 'global', config: { command: 'n' } }], _plugins: [], _meta: {} },
       workspaces: [],
     });
 
