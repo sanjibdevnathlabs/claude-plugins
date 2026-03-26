@@ -3,6 +3,62 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { config as env } from './env.js';
 
+/**
+ * Resolve ${VAR} and ${VAR:-default} patterns in a string,
+ * matching Claude Code's MCP config interpolation behavior.
+ * Looks up from configEnv first (the server's env block), then process.env.
+ * Unresolvable vars without defaults are left as-is (not an error).
+ */
+export function resolveEnvVar(str, configEnv) {
+  if (typeof str !== 'string' || !str.includes('${')) return str;
+  return str.replace(/\$\{([^}]+)\}/g, (match, expr) => {
+    const sepIdx = expr.indexOf(':-');
+    const varName = sepIdx >= 0 ? expr.slice(0, sepIdx) : expr;
+    const defaultVal = sepIdx >= 0 ? expr.slice(sepIdx + 2) : undefined;
+
+    if (configEnv && configEnv[varName] !== undefined) return configEnv[varName];
+    if (process.env[varName] !== undefined) return process.env[varName];
+    if (defaultVal !== undefined) return defaultVal;
+    return match; // leave unresolved
+  });
+}
+
+/**
+ * Resolve env vars across all string fields in a server config.
+ * Returns a new config object with resolved values (does not mutate input).
+ */
+export function resolveConfig(config) {
+  const envBlock = config.env || {};
+
+  // Resolve env values first (they may reference process.env vars)
+  const resolvedEnv = {};
+  for (const [key, val] of Object.entries(envBlock)) {
+    resolvedEnv[key] = resolveEnvVar(val, null); // env values resolve from process.env only
+  }
+
+  // Now resolve other fields using resolvedEnv + process.env
+  const resolved = { ...config };
+
+  if (config.command) {
+    resolved.command = resolveEnvVar(config.command, resolvedEnv);
+  }
+  if (config.args) {
+    resolved.args = config.args.map(arg => resolveEnvVar(arg, resolvedEnv));
+  }
+  if (config.url) {
+    resolved.url = resolveEnvVar(config.url, resolvedEnv);
+  }
+  if (config.headers) {
+    resolved.headers = {};
+    for (const [key, val] of Object.entries(config.headers)) {
+      resolved.headers[key] = resolveEnvVar(val, resolvedEnv);
+    }
+  }
+
+  resolved.env = resolvedEnv;
+  return resolved;
+}
+
 function withTimeout(promise, ms) {
   let timer;
   return Promise.race([
@@ -32,20 +88,22 @@ export async function probeServerTools(name, serverConfig, scope) {
     cache.delete(key); // evict stale entry
   }
 
+  const resolved = resolveConfig(serverConfig);
+
   let tools;
   try {
-    const type = serverConfig.type
-      || (serverConfig.command ? 'stdio' : undefined)
-      || (serverConfig.url ? 'http' : undefined);
+    const type = resolved.type
+      || (resolved.command ? 'stdio' : undefined)
+      || (resolved.url ? 'http' : undefined);
 
     if (type === 'stdio') {
-      tools = await withTimeout(probeStdio(name, serverConfig), PROBE_TIMEOUT_MS);
+      tools = await withTimeout(probeStdio(name, resolved), PROBE_TIMEOUT_MS);
     } else if (type === 'http') {
-      tools = await withTimeout(probeHttp(name, serverConfig), PROBE_TIMEOUT_MS);
-    } else if (type === 'sse' || serverConfig.type === 'sse') {
+      tools = await withTimeout(probeHttp(name, resolved), PROBE_TIMEOUT_MS);
+    } else if (type === 'sse' || resolved.type === 'sse') {
       return { error: 'SSE transport is not yet supported. Use stdio or http.' };
     } else {
-      return { error: `Unknown server type: ${type || serverConfig.type || 'none'}` };
+      return { error: `Unknown server type: ${type || resolved.type || 'none'}` };
     }
 
     if (cache.size >= MAX_CACHE_SIZE) {
